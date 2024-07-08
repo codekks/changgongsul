@@ -1,0 +1,195 @@
+import pygame
+import sys
+import random
+
+# Constants
+GRID_SIZE = 6
+CELL_SIZE = 80
+MARGIN = 20
+WINDOW_SIZE = (GRID_SIZE * CELL_SIZE + MARGIN * 2, GRID_SIZE * CELL_SIZE + MARGIN * 2)
+RED = (255, 0, 0)
+GRAY = (160, 160, 160)
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
+BLUE = (0,0,255)
+
+class TrafficLight:
+    def __init__(self):
+        self.states = {
+            'up': random.choice(['red', 'green']),
+            'down': random.choice(['red', 'green']),
+            'left': random.choice(['red', 'green']),
+            'right': random.choice(['red', 'green'])
+        }
+
+    def toggle(self):
+        for direction in self.states:
+            self.states[direction] = 'green' if self.states[direction] == 'red' else 'red'
+
+    def get_state(self, direction):
+        return self.states[direction]
+
+class Vehicle:
+    def __init__(self, color, position, orientation, destination=None):
+        self.color = color
+        self.position = position  # (x, y)
+        self.orientation = orientation  # 'H' for horizontal, 'V' for vertical
+        self.destination = destination
+
+    def draw(self, screen):
+        x, y = self.position
+        if self.orientation == 'H':
+            pygame.draw.rect(screen, self.color, (MARGIN + x * CELL_SIZE, MARGIN + y * CELL_SIZE, 2 * CELL_SIZE, CELL_SIZE))
+        else:
+            pygame.draw.rect(screen, self.color, (MARGIN + x * CELL_SIZE, MARGIN + y * CELL_SIZE, CELL_SIZE, 2 * CELL_SIZE))
+
+    def move(self, direction, board):
+        next_position = self.position[:]
+        if direction == 'up' and self.orientation == 'V':
+            next_position[1] -= 1
+        elif direction == 'down' and self.orientation == 'V':
+            next_position[1] += 1
+        elif direction == 'left' and self.orientation == 'H':
+            next_position[0] -= 1
+        elif direction == 'right' and self.orientation == 'H':
+            next_position[0] += 1
+
+        if board.can_move_to(next_position, direction):
+            self.position = next_position
+
+    def rotate(self, direction):
+        if direction == 'left':
+            if self.orientation == 'H' : self.orientation = 'V'
+            else : self.orientation='H'
+        elif direction == 'right':
+            if self.orientation == 'H' : self.orientation = 'V'
+            else : self.orientation='H'
+        elif direction == 'u-turn':
+            pass  # Not needed, rotation handles all turning cases
+
+    def auto_move(self, board):
+        if not self.destination:
+            return
+        if self.position == self.destination:
+            return
+
+        x, y = self.position
+        dest_x, dest_y = self.destination
+
+        if self.orientation == 'H':
+            if x < dest_x:
+                self.move('right', board)
+            elif x > dest_x:
+                self.move('left', board)
+            elif y !=dest_y:
+                self.rotate('left')
+               
+        else:
+            if y < dest_y:
+                self.move('down', board)
+            elif y > dest_y:
+                self.move('up', board)
+            elif x != dest_x:
+                self.rotate('right')
+                
+
+class Board:
+    def __init__(self):
+        self.vehicles = [
+            Vehicle(RED, [2, 2], 'H', [5, 2]),
+            Vehicle(GRAY, [0, 0], 'V', [0, 5]),
+            Vehicle(BLUE, [1, 0], 'H', [3, 0]),
+            Vehicle(GREEN, [4, 0], 'V', [2, 3]),
+            #Vehicle(BLACK, [5, 3], 'H', [5, 5]),
+            #Vehicle(GRAY, [3, 4], 'V', [3, 1])
+        ]
+        self.traffic_lights = [[TrafficLight() for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+
+    def draw(self, screen):
+        for vehicle in self.vehicles:
+            vehicle.draw(screen)
+
+    def toggle_traffic_lights(self):
+        for row in self.traffic_lights:
+            for light in row:
+                light.toggle()
+
+    def can_move_to(self, position, direction):
+        x, y = position
+        if 0 <= x < GRID_SIZE and 0 <= y < GRID_SIZE:
+            light = self.traffic_lights[y][x]
+            if light.get_state(direction) == 'green':
+                return True
+        return False
+
+    def move_vehicle(self, vehicle, direction):
+        vehicle.move(direction, self)
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode(WINDOW_SIZE)
+    pygame.display.set_caption("Rush Hour with Traffic Lights")
+
+    board = Board()
+    clock = pygame.time.Clock()
+    selected_vehicle = None
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                x, y = event.pos
+                grid_x = (x - MARGIN) // CELL_SIZE
+                grid_y = (y - MARGIN) // CELL_SIZE
+                for vehicle in board.vehicles:
+                    vx, vy = vehicle.position
+                    if vehicle.orientation == 'H' and vy == grid_y and vx <= grid_x < vx + 2:
+                        selected_vehicle = vehicle
+                    elif vehicle.orientation == 'V' and vx == grid_x and vy <= grid_y < vy + 2:
+                        selected_vehicle = vehicle
+            """  
+            elif event.type == pygame.MOUSEBUTTONUP:
+                selected_vehicle = None
+            elif event.type == pygame.KEYDOWN and selected_vehicle:
+                if event.key == pygame.K_UP:
+                    board.move_vehicle(selected_vehicle, 'up')
+                elif event.key == pygame.K_DOWN:
+                    board.move_vehicle(selected_vehicle, 'down')
+                elif event.key == pygame.K_LEFT:
+                    board.move_vehicle(selected_vehicle, 'left')
+                elif event.key == pygame.K_RIGHT:
+                    board.move_vehicle(selected_vehicle, 'right')
+                elif event.key == pygame.K_a:  # Rotate left
+                    selected_vehicle.rotate('left')
+                elif event.key == pygame.K_d:  # Rotate right
+                    selected_vehicle.rotate('right')
+                elif event.key == pygame.K_w:  # U-turn
+                    selected_vehicle.rotate('u-turn')
+                    """
+
+        screen.fill(WHITE)
+        board.draw(screen)
+        for vehicle in board.vehicles:
+            vehicle.auto_move(board)
+        pygame.display.flip()
+        clock.tick(30)
+        board.toggle_traffic_lights()  # Change traffic lights every frame for demonstration
+        #convert image so it can be displayed in OpenCV
+        view = pygame.surfarray.array3d(screen)
+
+        #  convert from (width, height, channel) to (height, width, channel)
+        view = view.transpose([1, 0, 2])
+
+        #  convert from rgb to bgr
+        img_bgr = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
+
+        #Display image, clear cell every 0.5 seconds
+        cv2_imshow(img_bgr)
+        time.sleep(2)
+        output.clear()
+
+if __name__ == "__main__":
+    main()
