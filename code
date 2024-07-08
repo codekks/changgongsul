@@ -150,25 +150,6 @@ def main():
                         selected_vehicle = vehicle
                     elif vehicle.orientation == 'V' and vx == grid_x and vy <= grid_y < vy + 2:
                         selected_vehicle = vehicle
-            """  
-            elif event.type == pygame.MOUSEBUTTONUP:
-                selected_vehicle = None
-            elif event.type == pygame.KEYDOWN and selected_vehicle:
-                if event.key == pygame.K_UP:
-                    board.move_vehicle(selected_vehicle, 'up')
-                elif event.key == pygame.K_DOWN:
-                    board.move_vehicle(selected_vehicle, 'down')
-                elif event.key == pygame.K_LEFT:
-                    board.move_vehicle(selected_vehicle, 'left')
-                elif event.key == pygame.K_RIGHT:
-                    board.move_vehicle(selected_vehicle, 'right')
-                elif event.key == pygame.K_a:  # Rotate left
-                    selected_vehicle.rotate('left')
-                elif event.key == pygame.K_d:  # Rotate right
-                    selected_vehicle.rotate('right')
-                elif event.key == pygame.K_w:  # U-turn
-                    selected_vehicle.rotate('u-turn')
-                    """
 
         screen.fill(WHITE)
         board.draw(screen)
@@ -177,6 +158,8 @@ def main():
         pygame.display.flip()
         clock.tick(30)
         board.toggle_traffic_lights()  # Change traffic lights every frame for demonstration
+
+        #abcdabcdabcdabcdabcdabcd
         #convert image so it can be displayed in OpenCV
         view = pygame.surfarray.array3d(screen)
 
