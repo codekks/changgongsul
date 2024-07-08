@@ -1,0 +1,147 @@
+import itertools
+from queue import PriorityQueue
+from concurrent.futures import ThreadPoolExecutor
+
+class Car:
+    def __init__(self, car_type, speed, start_position, destination):
+        self.car_type = car_type
+        self.speed = speed
+        self.start_time = 0
+        self.end_time = None
+        self.position = start_position
+        self.destination = destination
+    
+    def move(self, time, grid):
+        path = self.a_star_search(grid)
+        if path:
+            next_position = path[0]
+            if grid.is_valid_position(next_position) and not grid.is_occupied(next_position):
+                grid.update_position(self, next_position)
+
+    def a_star_search(self, grid):
+        start = self.position
+        goal = self.destination
+        frontier = PriorityQueue()
+        frontier.put(start, 0)
+        came_from = {}
+        cost_so_far = {}
+        came_from[start] = None
+        cost_so_far[start] = 0
+
+        while not frontier.empty():
+            current = frontier.get()
+
+            if current == goal:
+                break
+
+            for next in grid.neighbors(current):
+                new_cost = cost_so_far[current] + 1
+                if next not in cost_so_far or new_cost < cost_so_far[next]:
+                    cost_so_far[next] = new_cost
+                    priority = new_cost + self.heuristic(goal, next)
+                    frontier.put(next, priority)
+                    came_from[next] = current
+
+        return self.reconstruct_path(came_from, start, goal)
+    
+    def heuristic(self, a, b):
+        (x1, y1) = a
+        (x2, y2) = b
+        return abs(x1 - x2) + abs(y1 - y2)
+
+    def reconstruct_path(self, came_from, start, goal):
+        current = goal
+        path = []
+        while current != start:
+            path.append(current)
+            current = came_from[current]
+        path.reverse()
+        return path
+
+class Pedestrian:
+    def __init__(self, crossing_speed, count):
+        self.crossing_speed = crossing_speed
+        self.count = count
+    
+    def update_count(self, new_count):
+        self.count = new_count
+
+class Grid:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.grid = [[None for _ in range(width)] for _ in range(height)]
+    
+    def is_valid_position(self, position):
+        x, y = position
+        return 0 <= x < self.width and 0 <= y < self.height
+    
+    def is_occupied(self, position):
+        x, y = position
+        return self.grid[y][x] is not None
+    
+    def update_position(self, car, new_position):
+        old_x, old_y = car.position
+        new_x, new_y = new_position
+        if self.is_valid_position(new_position) and not self.is_occupied(new_position):
+            self.grid[old_y][old_x] = None
+            self.grid[new_y][new_x] = car
+            car.position = new_position
+
+    def neighbors(self, position):
+        x, y = position
+        results = [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]
+        results = filter(self.is_valid_position, results)
+        return results
+
+class TrafficLight:
+    def __init__(self, red_duration, yellow_duration, green_duration):
+        self.red_duration = red_duration
+        self.yellow_duration = yellow_duration
+        self.green_duration = green_duration
+        self.current_time = 0
+        self.state = 'red'
+    
+    def update(self, time):
+        cycle_time = self.red_duration + self.yellow_duration + self.green_duration
+        time_in_cycle = time % cycle_time
+        if time_in_cycle < self.red_duration:
+            self.state = 'red'
+        elif time_in_cycle < self.red_duration + self.yellow_duration:
+            self.state = 'yellow'
+        else:
+            self.state = 'green'
+
+def simulate_traffic(cars, pedestrians, grid, traffic_lights, max_time):
+    with ThreadPoolExecutor() as executor:
+        for time in range(max_time):
+            futures = [executor.submit(car.move, time, grid) for car in cars]
+            for future in futures:
+                future.result()
+            for light in traffic_lights:
+                light.update(time)
+
+def find_optimal_signal_times(cars, pedestrians, grid, max_time):
+    best_avg_time = float('inf')
+    best_params = None
+    
+    for red_duration, yellow_duration, green_duration in itertools.product(range(10, 61, 10), repeat=3):
+        traffic_lights = [TrafficLight(red_duration, yellow_duration, green_duration)]
+        simulate_traffic(cars, pedestrians, grid, traffic_lights, max_time)
+        
+        avg_time = sum(car.end_time - car.start_time for car in cars if car.end_time is not None) / len(cars)
+        
+        if avg_time < best_avg_time:
+            best_avg_time = avg_time
+            best_params = (red_duration, yellow_duration, green_duration)
+    
+    return best_params, best_avg_time
+
+# 예시 실행
+cars = [Car('small', 1, (0, 0), (10, 10)), Car('large', 1, (5, 5), (10, 0))]
+pedestrians = [Pedestrian(1, 5)]
+grid = Grid(20, 20)
+max_time = 100
+
+best_params, best_avg_time = find_optimal_signal_times(cars, pedestrians, grid, max_time)
+print(f'Best Signal Durations: {best_params}, Best Average Time: {best_avg_time}')
