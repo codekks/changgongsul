@@ -1,0 +1,66 @@
+# Traffic parameters -> 황색등 점멸 시간을 고려하기 위해서 넣었는데 그냥 속도만 정하고 나머지는 상수로 해도 됨. 
+V = 13.89  # Approach speed in m/s (50 km/h)
+d = 5.0  # Deceleration in m/s^2
+Tb = 1.0  # Perception reaction time in seconds
+W = 15.0  # Intersection width in meters
+L = 5.0  # Vehicle length in meters
+Ts = 1.5  # Start-up lost time in seconds
+
+class TrafficLight:
+    def __init__(self):
+        self.states = {
+            'up': random.choice(['red', 'green']),
+            'down': random.choice(['red', 'green']),
+            'left': random.choice(['red', 'green']),
+            'right': random.choice(['red', 'green'])
+        }
+        self.timers = {direction: 0 for direction in self.states}
+        self.position = None  # 신호등의 위치
+        self.left_turn = False  # 좌회전 신호 여부
+
+    def set_position(self, position):
+        self.position = position  # 신호등의 위치 설정
+
+    def calculate_yellow_time(self):
+        return Tb + V / (2 * d) + (W + L) / V - Ts
+
+    def toggle(self):
+        yellow_time = self.calculate_yellow_time()
+        if self.left_turn:
+            # 좌회전 신호일 경우
+            for direction in ['up', 'down', 'left', 'right']:
+                self.states[direction] = 'red'
+            self.left_turn = False
+        else:
+            # 일반 신호일 경우
+            for direction in self.states:
+                if self.states[direction] == 'green':
+                    self.states[direction] = 'yellow'
+                    self.timers[direction] = yellow_time
+                elif self.states[direction] == 'yellow':
+                    if self.timers[direction] > 0:
+                        self.timers[direction] -= 1
+                    else:
+                        self.states[direction] = 'red'
+                elif self.states[direction] == 'red':
+                    self.states[direction] = 'green'
+            self.left_turn = True  # 다음 신호에 좌회전 신호를 적용
+
+    def get_state(self, direction):
+        return self.states[direction]
+
+    def draw(self, screen):
+        if not self.position:
+            return
+
+        x, y = self.position
+        for direction, color in self.states.items():
+            draw_color = GREEN if color == 'green' else RED if color == 'red' else YELLOW
+            if direction == 'up':
+                pygame.draw.circle(screen, draw_color, (MARGIN + x * CELL_SIZE + CELL_SIZE // 2, MARGIN + y * CELL_SIZE), 10)
+            elif direction == 'down':
+                pygame.draw.circle(screen, draw_color, (MARGIN + x * CELL_SIZE + CELL_SIZE // 2, MARGIN + (y + 1) * CELL_SIZE), 10)
+            elif direction == 'left':
+                pygame.draw.circle(screen, draw_color, (MARGIN + x * CELL_SIZE, MARGIN + y * CELL_SIZE + CELL_SIZE // 2), 10)
+            elif direction == 'right':
+                pygame.draw.circle(screen, draw_color, (MARGIN + (x + 1) * CELL_SIZE, MARGIN + y * CELL_SIZE + CELL_SIZE // 2), 10)
