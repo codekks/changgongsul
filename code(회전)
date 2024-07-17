@@ -1,0 +1,159 @@
+
+import pygame
+import sys
+import random
+import math
+import numpy as np
+
+# Constants
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+CROSSROADS_RADIUS = 30
+ROAD_WIDTH = 10
+GRID_SIZE = 3  # 3x3 grid of crossroads
+CROSSROADS_COLOR = (255, 0, 0)
+ROAD_COLOR = (160, 160, 160)
+BACKGROUND_COLOR = (255, 255, 255)
+VEHICLE_SPEED = 2  # Speed of the vehicles
+CAR_IMAGE_PATH = "car.png"  # Path to the car image file
+VEHICLE_SIZE = (40, 20)  # Desired size of the vehicle image
+carname="0deg.png"
+
+class Crossroad(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = pygame.Surface((CROSSROADS_RADIUS * 2, CROSSROADS_RADIUS * 2), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, CROSSROADS_COLOR, (CROSSROADS_RADIUS, CROSSROADS_RADIUS), CROSSROADS_RADIUS)
+        self.rect = self.image.get_rect(center=(x, y))
+        self.traffic_lights = {'up': 'red', 'down': 'red', 'left': 'red', 'right': 'red'}
+
+    def toggle_lights(self):
+        for direction in self.traffic_lights:
+            self.traffic_lights[direction] = 'green' if self.traffic_lights[direction] == 'red' else 'red'
+
+    def get_light(self, direction):
+        return self.traffic_lights[direction]
+
+class Road(pygame.sprite.Sprite):
+    def __init__(self, start_pos, end_pos, control_point):
+        super().__init__()
+        self.start_pos = pygame.Vector2(start_pos)
+        self.end_pos = pygame.Vector2(end_pos)
+        self.control_point = pygame.Vector2(control_point)
+        self.path_points = self.calculate_bezier_path()
+        self.image = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        self.draw_bezier_curve()
+        self.rect = self.image.get_rect()
+
+    def calculate_bezier_path(self):
+        path = []
+        for t in range(101):
+            t /= 100
+            x = (1 - t)**2 * self.start_pos.x + 2 * (1 - t) * t * self.control_point.x + t**2 * self.end_pos.x
+            y = (1 - t)**2 * self.start_pos.y + 2 * (1 - t) * t * self.control_point.y + t**2 * self.end_pos.y
+            path.append(pygame.Vector2(x, y))
+        return path
+
+    def draw_bezier_curve(self):
+        for point in self.path_points:
+            pygame.draw.circle(self.image, ROAD_COLOR, (int(point.x), int(point.y)), ROAD_WIDTH // 2)
+
+class Vehicle(pygame.sprite.Sprite):
+    def __init__(self, position, road):
+        super().__init__()
+        self.original_image = pygame.image.load(carname).convert_alpha()
+        self.original_image = pygame.transform.scale(self.original_image, VEHICLE_SIZE)
+        self.image = self.original_image
+        self.rect = self.image.get_rect(center=position)
+        self.position = pygame.Vector2(position)
+        self.road = road
+        self.path_index = 0
+        self.destination = self.road.path_points[self.path_index]
+        self.calculate_angle()
+
+    def calculate_angle(self):
+        direction = self.destination - self.position
+        self.angle = math.degrees(math.atan2(-direction.y, direction.x))
+        self.image = pygame.transform.rotate(self.original_image, self.angle)
+        self.rect = self.image.get_rect(center=self.position)
+
+    def update(self):
+        if self.path_index < len(self.road.path_points) - 1:
+            direction = self.destination - self.position
+            distance = direction.length()
+            if distance > VEHICLE_SPEED:
+                direction.scale_to_length(VEHICLE_SPEED)
+                self.position += direction
+                self.rect.center = self.position
+            else:
+                self.position = self.destination
+                self.path_index += 1
+                self.destination = self.road.path_points[self.path_index]
+                self.calculate_angle()
+
+def create_grid():
+    connection = np.zeros((GRID_SIZE**2,GRID_SIZE**2))
+    crossroads_group = pygame.sprite.Group()
+    roads_group = pygame.sprite.Group()
+    spacing_x = SCREEN_WIDTH // (GRID_SIZE + 1)
+    spacing_y = SCREEN_HEIGHT // (GRID_SIZE + 1)
+
+    # Create crossroads
+    for i in range(1, GRID_SIZE + 1):
+        for j in range(1, GRID_SIZE + 1):
+            x = i * spacing_x
+            y = j * spacing_y
+            crossroads_group.add(Crossroad(x, y))
+
+    # Create roads with control points for curves
+    crossroad_positions = [(c.rect.centerx, c.rect.centery) for c in crossroads_group]
+    for i, pos1 in enumerate(crossroad_positions):
+        for j, pos2 in enumerate(crossroad_positions):
+            if i != j and (abs(pos1[0] - pos2[0]) == spacing_x or abs(pos1[1] - pos2[1]) == spacing_y):
+                # Random control point for the curve
+                if connection[i][j]>0 : continue
+                if((pos1[1]-pos2[1])**2+(pos1[0]-pos2[0])**2)>2*(spacing_x**2+spacing_y**2) : continue
+                control_x = (pos1[0] + pos2[0]) / 2 + random.randint(-50, 50)
+                control_y = (pos1[1] + pos2[1]) / 2 + random.randint(-50, 50)
+                road = Road(pos1, pos2, (control_x, control_y))
+                roads_group.add(road)
+                connection[i][j]+=1
+                connection[j][i]+=1
+                    
+
+    return crossroads_group, roads_group
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    pygame.display.set_caption("Circular Crossroads with Curved Roads")
+
+    crossroads_group, roads_group = create_grid()
+    vehicles_group = pygame.sprite.Group()
+
+    clock = pygame.time.Clock()
+
+    # Add random vehicles
+    for _ in range(5):
+        road = random.choice(roads_group.sprites())
+        start_pos = road.start_pos
+        vehicle = Vehicle(start_pos, road)
+        vehicles_group.add(vehicle)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        screen.fill(BACKGROUND_COLOR)
+        roads_group.draw(screen)
+        crossroads_group.draw(screen)
+        vehicles_group.update()
+        vehicles_group.draw(screen)
+
+        pygame.display.flip()
+        clock.tick(60)
+
+if __name__ == "__main__":
+    main()
