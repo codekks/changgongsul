@@ -1,6 +1,7 @@
 import pygame
 import time
 import math
+import random
 
 # 파이게임 초기화
 pygame.init()
@@ -35,9 +36,15 @@ class Vehicle(pygame.sprite.Sprite):
         self.current_index = 0
         self.moving = True  # Vehicle starts by moving
         self.angle = 0
-
-    def update(self, traffic_lights, vehicles, intersection_rect):
+        self.start_time = None  # Time when the vehicle starts moving
+        self.end_time = None  # Time when the vehicle reaches the destination
+        self.travel_time = None  # Time taken to travel the path
+        
+    def update(self, traffic_lights, vehicles, intersections):
         if self.path and self.current_index < len(self.path):
+            if self.start_time is None:
+                self.start_time = time.time()  # Start time when the vehicle starts moving
+
             next_pos = self.path[self.current_index]
             next_rect = self.rect.copy()
             next_rect.x, next_rect.y = next_pos[0], next_pos[1]
@@ -49,18 +56,20 @@ class Vehicle(pygame.sprite.Sprite):
                     self.moving = False
                     break
 
-            # Check traffic lights at the intersection
-            if self.moving and intersection_rect.colliderect(next_rect):
-                for light in traffic_lights:
-                    if light.rect.colliderect(intersection_rect):
-                        current_time = time.time()
-                        time_since_last_switch = current_time - light.last_switch
-                        if light.state == 'red':
-                            self.moving = False
-                            break
-                        elif light.state == 'yellow' and light.red_time - time_since_last_switch <= 1:
-                            self.moving = False
-                            break
+            # Check traffic lights at intersections
+            for intersection in intersections:
+                intersection_rect = pygame.Rect(intersection[0] - 20, intersection[1] - 20, 40, 40)
+                if self.moving and intersection_rect.colliderect(next_rect):
+                    for light in traffic_lights:
+                        if light.rect.colliderect(intersection_rect):
+                            current_time = time.time()
+                            time_since_last_switch = current_time - light.last_switch
+                            if light.state == 'red':
+                                self.moving = False
+                                break
+                            elif light.state == 'yellow' and light.red_time - time_since_last_switch <= 1:
+                                self.moving = False
+                                break
 
             if self.moving:
                 dx, dy = next_pos[0] - self.rect.x, next_pos[1] - self.rect.y
@@ -77,11 +86,19 @@ class Vehicle(pygame.sprite.Sprite):
                     self.rect.y += self.speed * dy / distance
                 
                 # Calculate angle only if there is a significant change in direction
-                
+
+        elif self.path and self.current_index >= len(self.path):
+            if self.end_time is None:
+                self.end_time = time.time()  # End time when the vehicle reaches the destination
+                self.travel_time = self.end_time - self.start_time
+                print(f"Vehicle reached destination. Travel time: {self.travel_time} seconds")
 
     def set_path(self, path):
         self.path = path
         self.current_index = 0
+        self.start_time = None
+        self.end_time = None
+        self.travel_time = None
 
 # 신호등 클래스
 class TrafficLight(pygame.sprite.Sprite):
@@ -192,64 +209,116 @@ def is_road(position, roads):
             return True
     return False
 
+# 랜덤 도로 생성 함수
+def create_random_roads(num_roads):
+    roads = []
+    min_distance = 100  # 도로 간 최소 거리
+
+    while len(roads) < num_roads:
+        if random.choice([True, False]):  # Vertical or horizontal
+            x = random.randint(0, screen_width)
+            new_road = Road((x, 0), (x, screen_height), 40)
+        else:
+            y = random.randint(0, screen_height)
+            new_road = Road((0, y), (screen_width, y), 40)
+        
+        # 도로 간 거리 체크
+        too_close = False
+        for road in roads:
+            if road.start_pos[0] == road.end_pos[0] and new_road.start_pos[0] == new_road.end_pos[0]:  # 둘 다 수직 도로인 경우
+                if abs(road.start_pos[0] - new_road.start_pos[0]) < min_distance:
+                    too_close = True
+                    break
+            elif road.start_pos[1] == road.end_pos[1] and new_road.start_pos[1] == new_road.end_pos[1]:  # 둘 다 수평 도로인 경우
+                if abs(road.start_pos[1] - new_road.start_pos[1]) < min_distance:
+                    too_close = True
+                    break
+
+        if not too_close:
+            roads.append(new_road)
+    
+    return roads
+
+# 랜덤 교차로 및 신호등 생성 함수
+def create_intersections_and_lights(roads):
+    intersections = []
+    traffic_lights = pygame.sprite.Group()
+    for road1 in roads:
+        for road2 in roads:
+            if road1 != road2:
+                if road1.start_pos[0] == road1.end_pos[0] and road2.start_pos[1] == road2.end_pos[1]:  # Vertical and horizontal
+                    intersection = (road1.start_pos[0], road2.start_pos[1])
+                    if 0 <= intersection[0] <= screen_width and 0 <= intersection[1] <= screen_height:
+                        intersections.append(intersection)
+                        light = TrafficLight(intersection[0], intersection[1], green_time=5, yellow_time=1, red_time=5)
+                        traffic_lights.add(light)
+                elif road1.start_pos[1] == road1.end_pos[1] and road2.start_pos[0] == road2.end_pos[0]:  # Horizontal and vertical
+                    intersection = (road2.start_pos[0], road1.start_pos[1])
+                    if 0 <= intersection[0] <= screen_width and 0 <= intersection[1] <= screen_height:
+                        intersections.append(intersection)
+                        light = TrafficLight(intersection[0], intersection[1], green_time=5, yellow_time=1, red_time=5)
+                        traffic_lights.add(light)
+    return intersections, traffic_lights
+
+# 도로 위 랜덤 위치 생성 함수
+def random_position_on_road(road, right_side=True):
+    if road.start_pos[0] == road.end_pos[0]:  # Vertical road
+        x = road.start_pos[0] + (10 if right_side else -10)  # 중앙에서 오른쪽 또는 왼쪽
+        y = random.randint(road.start_pos[1], road.end_pos[1])
+        return (x, y)
+    else:  # Horizontal road
+        x = random.randint(road.start_pos[0], road.end_pos[0])
+        y = road.start_pos[1] + (10 if right_side else -10)  # 중앙에서 위 또는 아래
+        return (x, y)
+
+# 랜덤 차량 생성 함수
+def create_random_vehicles(num_vehicles, roads):
+    vehicles = pygame.sprite.Group()
+    for _ in range(num_vehicles):
+        road = random.choice(roads)
+        right_side = random.choice([True, False])
+        pos = random_position_on_road(road, right_side)
+        speed = random.randint(1, 3)
+        vehicle = Vehicle(pos[0], pos[1], speed)
+        if road.start_pos[0] == road.end_pos[0]:  # Vertical road
+            vehicle.angle = 0 if pos[1] < road.end_pos[1] else 180  # Set angle based on direction
+        else:  # Horizontal road
+            vehicle.angle = 90 if pos[0] < road.end_pos[0] else 270  # Set angle based on direction
+        vehicle.image = pygame.transform.rotate(vehicle.original_image, vehicle.angle)
+        vehicles.add(vehicle)
+    return vehicles
+
 # 스프라이트 그룹 생성
 all_sprites = pygame.sprite.Group()
 traffic_lights = pygame.sprite.Group()
-vehicles = pygame.sprite.Group()
 
-# 신호등 생성
-traffic_light1 = TrafficLight(400, 300, green_time=5, yellow_time=1, red_time=5)
-traffic_lights.add(traffic_light1)
-all_sprites.add(traffic_light1)
+# 랜덤 도로 및 차선 구분선 생성
+roads = create_random_roads(4)
+lane_markers = []
+for road in roads:
+    lane_markers.append(LaneMarker(road.start_pos, road.end_pos, WHITE, 'dashed'))
 
-# 교차로 영역 정의
-intersection_rect = pygame.Rect(380, 280, 40, 40)
+# 랜덤 교차로 및 신호등 생성
+intersections, traffic_lights = create_intersections_and_lights(roads)
+all_sprites.add(traffic_lights)
 
-# 차량 생성
-vehicle1 = Vehicle(100, 310, speed=2)
-all_sprites.add(vehicle1)
-vehicles.add(vehicle1)
+# 랜덤 차량 생성
+vehicles = create_random_vehicles(5, roads)
+all_sprites.add(vehicles)
 
-vehicle2 = Vehicle(200, 310, speed=2)
-all_sprites.add(vehicle2)
-vehicles.add(vehicle2)
-
-# 도로 및 차선 구분선 생성
-roads = [
-    Road((0, 300), (800, 300), 40),
-    Road((400, 0), (400, 600), 40)
-]
-
-lane_markers = [
-    LaneMarker((0, 300), (800, 300), WHITE, 'dashed'),
-    LaneMarker((400, 0), (400, 600), WHITE, 'dashed')
-]
-
-# 경로 설정
-start_pos = (100, 310)
-end_pos = (400, 110)
-if is_road(end_pos, roads):
-    path = calculate_path(start_pos, end_pos, roads)
-    print(f"Path for vehicle1: {path}")  # Debugging: Print the path
-    if path:
-        vehicle1.set_path(path)
-    else:
-        print("No path found for vehicle1")
-else:
-    print(f"End position {end_pos} is not on the road for vehicle1")
-
-# 경로 설정
-start_pos2 = (200, 310)
-end_pos2 = (400, 110)
-if is_road(end_pos2, roads):
-    path2 = calculate_path(start_pos2, end_pos2, roads)
-    print(f"Path for vehicle2: {path2}")  # Debugging: Print the path
-    if path2:
-        vehicle2.set_path(path2)
-    else:
-        print("No path found for vehicle2")
-else:
-    print(f"End position {end_pos2} is not on the road for vehicle2")
+# 차량 경로 설정
+for vehicle in vehicles:
+    start_pos = (vehicle.rect.x, vehicle.rect.y)
+    start_road = next((road for road in roads if road.is_on_road(start_pos)), None)
+    if start_road:
+        right_side = start_pos[0] % 20 == 10 or start_pos[1] % 20 == 10
+        end_pos = random_position_on_road(start_road, right_side)
+        path = calculate_path(start_pos, end_pos, roads)
+        print(f"Path for vehicle at ({vehicle.rect.x}, {vehicle.rect.y}): {path}")  # Debugging: Print the path
+        if path:
+            vehicle.set_path(path)
+        else:
+            print(f"No path found for vehicle at ({vehicle.rect.x}, {vehicle.rect.y})")
 
 # 메인 루프
 running = True
@@ -263,7 +332,7 @@ while running:
     # 업데이트
     traffic_lights.update()
     for vehicle in vehicles:
-        vehicle.update(traffic_lights, vehicles, intersection_rect)
+        vehicle.update(traffic_lights, vehicles, intersections)
 
     # 화면 채우기
     screen.fill(WHITE)
