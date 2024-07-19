@@ -1,178 +1,281 @@
+import geopandas as gpd
+from shapely.geometry import MultiLineString, LineString
 import pygame
-import sys
+import time
+import math
 import random
 
-# Constants
-GRID_SIZE = 6
-CELL_SIZE = 80
-MARGIN = 20
-WINDOW_SIZE = (GRID_SIZE * CELL_SIZE + MARGIN * 2, GRID_SIZE * CELL_SIZE + MARGIN * 2)
-RED = (255, 0, 0)
-GRAY = (160, 160, 160)
+# Shapefile 데이터 읽기
+roads_shapefile_path = 'C:/Users/고경수/OneDrive/바탕 화면/공축설/!서울시CITS_정밀지도_경위도/02. 여의도 테스트베드/HDMap_경위도_타원체고/A1_LANE.shp'
+nodes_shapefile_path = 'C:/Users/고경수/OneDrive/바탕 화면/공축설/!서울시CITS_정밀지도_경위도/02. 여의도 테스트베드/HDMap_경위도_타원체고/A3_LINK.shp'
+traffic_lights_shapefile_path = 'C:/Users/고경수/OneDrive/바탕 화면/공축설/!서울시CITS_정밀지도_경위도/02. 여의도 테스트베드/HDMap_경위도_타원체고/B1_SIGNAL_POINT.shp'
+
+# 도로 데이터 읽기 및 변환
+print("Reading and processing road data...")
+roads_gdf = gpd.read_file(roads_shapefile_path)
+roads = []
+for _, row in roads_gdf.iterrows():
+    geom = row.geometry
+    if isinstance(geom, MultiLineString):
+        for line in geom.geoms:
+            if isinstance(line, LineString):
+                for i in range(len(line.coords) - 1):
+                    start_pos = tuple(map(float, line.coords[i][:2]))  # (x, y)만 사용
+                    end_pos = tuple(map(float, line.coords[i + 1][:2]))  # (x, y)만 사용
+                    roads.append((start_pos, end_pos))
+    elif isinstance(geom, LineString):
+        for i in range(len(geom.coords) - 1):
+            start_pos = tuple(map(float, geom.coords[i][:2]))  # (x, y)만 사용
+            end_pos = tuple(map(float, geom.coords[i + 1][:2]))  # (x, y)만 사용
+            roads.append((start_pos, end_pos))
+
+# 신호등 데이터 읽기 및 변환
+print("Reading and processing traffic light data...")
+traffic_lights_gdf = gpd.read_file(traffic_lights_shapefile_path)
+traffic_lights = [(float(light.coords[0][0]), float(light.coords[0][1])) for light in traffic_lights_gdf.geometry]
+
+# 노드 데이터 읽기 및 변환
+print("Reading and processing node data...")
+nodes_gdf = gpd.read_file(nodes_shapefile_path)
+nodes = []
+for _, row in nodes_gdf.iterrows():
+    geom = row.geometry
+    if isinstance(geom, MultiLineString):
+        for line in geom.geoms:
+            if isinstance(line, LineString):
+                for coord in line.coords:
+                    nodes.append(tuple(map(float, coord[:2])))  # (x, y)만 사용
+    elif isinstance(geom, LineString):
+        for coord in geom.coords:
+            nodes.append(tuple(map(float, coord[:2])))  # (x, y)만 사용
+
+print("Data processing complete.")
+
+# Pygame 초기화
+pygame.init()
+
+# 화면 크기 설정
+screen_width, screen_height = 1050, 700
+screen = pygame.display.set_mode((screen_width, screen_height))
+pygame.display.set_caption('Traffic Simulation')
+
+# 색상 정의
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
+RED = (255, 0, 0)
 GREEN = (0, 255, 0)
-BLUE = (0,0,255)
+YELLOW = (255, 255, 0)
+BLUE = (0, 0, 255)
+PURPLE = (128, 0, 128)
 
-class TrafficLight:
-    def __init__(self):
-        self.states = {
-            'up': random.choice(['red', 'green']),
-            'down': random.choice(['red', 'green']),
-            'left': random.choice(['red', 'green']),
-            'right': random.choice(['red', 'green'])
-        }
+# 좌표 변환 함수
+def transform_coords(coords, scale, offset):
+    return [(int((x - offset[0]) * scale), int((y - offset[1]) * scale)) for x, y in coords]
 
-    def toggle(self):
-        for direction in self.states:
-            self.states[direction] = 'green' if self.states[direction] == 'red' else 'red'
-
-    def get_state(self, direction):
-        return self.states[direction]
-
-class Vehicle:
-    def __init__(self, color, position, orientation, destination=None):
+# 도로 클래스
+class Road:
+    def __init__(self, start_pos, end_pos, width=2, color=BLACK):
+        self.start_pos = start_pos
+        self.end_pos = end_pos
+        self.width = width
         self.color = color
-        self.position = position  # (x, y)
-        self.orientation = orientation  # 'H' for horizontal, 'V' for vertical
-        self.destination = destination
 
     def draw(self, screen):
-        x, y = self.position
-        if self.orientation == 'H':
-            pygame.draw.rect(screen, self.color, (MARGIN + x * CELL_SIZE, MARGIN + y * CELL_SIZE, 2 * CELL_SIZE, CELL_SIZE))
-        else:
-            pygame.draw.rect(screen, self.color, (MARGIN + x * CELL_SIZE, MARGIN + y * CELL_SIZE, CELL_SIZE, 2 * CELL_SIZE))
+        pygame.draw.line(screen, self.color, self.start_pos, self.end_pos, self.width)
 
-    def move(self, direction, board):
-        next_position = self.position[:]
-        if direction == 'up' and self.orientation == 'V':
-            next_position[1] -= 1
-        elif direction == 'down' and self.orientation == 'V':
-            next_position[1] += 1
-        elif direction == 'left' and self.orientation == 'H':
-            next_position[0] -= 1
-        elif direction == 'right' and self.orientation == 'H':
-            next_position[0] += 1
+# 신호등 클래스
+class TrafficLight(pygame.sprite.Sprite):
+    def __init__(self, x, y, green_time, yellow_time, red_time):
+        super().__init__()
+        self.image = pygame.Surface([5, 5])  # 신호등 크기 조정
+        self.image.fill(RED)
+        self.rect = self.image.get_rect()
+        self.rect.center = (x, y)
+        self.green_time = green_time
+        self.yellow_time = yellow_time
+        self.red_time = red_time
+        self.state = 'red'
+        self.last_switch = time.time()
 
-        if board.can_move_to(next_position, direction):
-            self.position = next_position
+    def update(self):
+        current_time = time.time()
+        time_since_last_switch = current_time - self.last_switch
 
-    def rotate(self, direction):
-        if direction == 'left':
-            if self.orientation == 'H' : self.orientation = 'V'
-            else : self.orientation='H'
-        elif direction == 'right':
-            if self.orientation == 'H' : self.orientation = 'V'
-            else : self.orientation='H'
-        elif direction == 'u-turn':
-            pass  # Not needed, rotation handles all turning cases
+        if self.state == 'red' and time_since_last_switch > self.red_time:
+            self.state = 'green'
+            self.image.fill(GREEN)
+            self.last_switch = current_time
+        elif self.state == 'green' and time_since_last_switch > self.green_time:
+            self.state = 'yellow'
+            self.image.fill(YELLOW)
+            self.last_switch = current_time
+        elif self.state == 'yellow' and time_since_last_switch > self.yellow_time:
+            self.state = 'red'
+            self.image.fill(RED)
+            self.last_switch = current_time
 
-    def auto_move(self, board):
-        if not self.destination:
-            return
-        if self.position == self.destination:
-            return
+# 차량 클래스
+class Vehicle(pygame.sprite.Sprite):
+    def __init__(self, x, y, speed, size_x=10, size_y=5):  # 차량 크기 조정
+        super().__init__()
+        self.original_image = pygame.Surface([size_x, size_y])
+        self.original_image.fill(BLUE)
+        self.image = self.original_image.copy()
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+        self.speed = speed
+        self.path = []
+        self.current_index = 0
 
-        x, y = self.position
-        dest_x, dest_y = self.destination
+    def update(self, traffic_lights, vehicles, intersections):
+        if self.path and self.current_index < len(self.path):
+            next_pos = self.path[self.current_index]
+            next_rect = self.rect.copy()
+            next_rect.x, next_rect.y = next_pos[0], next_pos[1]
 
-        if self.orientation == 'H':
-            if x < dest_x:
-                self.move('right', board)
-            elif x > dest_x:
-                self.move('left', board)
-            elif y !=dest_y:
-                self.rotate('left')
-               
-        else:
-            if y < dest_y:
-                self.move('down', board)
-            elif y > dest_y:
-                self.move('up', board)
-            elif x != dest_x:
-                self.rotate('right')
-                
+            # Check for potential collisions with other vehicles
+            self.moving = True
+            for vehicle in vehicles:
+                if vehicle != self and next_rect.colliderect(vehicle.rect.inflate(40, 40)):
+                    self.moving = False
+                    break
 
-class Board:
-    def __init__(self):
-        self.vehicles = [
-            Vehicle(RED, [2, 2], 'H', [5, 2]),
-            Vehicle(GRAY, [0, 0], 'V', [0, 5]),
-            Vehicle(BLUE, [1, 0], 'H', [3, 0]),
-            Vehicle(GREEN, [4, 0], 'V', [2, 3]),
-            #Vehicle(BLACK, [5, 3], 'H', [5, 5]),
-            #Vehicle(GRAY, [3, 4], 'V', [3, 1])
-        ]
-        self.traffic_lights = [[TrafficLight() for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+            # Check traffic lights at intersections
+            for intersection in intersections:
+                intersection_rect = pygame.Rect(intersection[0] - 20, intersection[1] - 20, 40, 40)
+                if self.moving and intersection_rect.colliderect(next_rect):
+                    for light in traffic_lights:
+                        if light.rect.colliderect(intersection_rect):
+                            current_time = time.time()
+                            time_since_last_switch = current_time - light.last_switch
+                            if light.state == 'red':
+                                self.moving = False
+                                break
+                            elif light.state == 'yellow' and light.red_time - time_since_last_switch <= 1:
+                                self.moving = False
+                                break
 
-    def draw(self, screen):
-        for vehicle in self.vehicles:
-            vehicle.draw(screen)
+            if self.moving:
+                dx, dy = next_pos[0] - self.rect.x, next_pos[1] - self.rect.y
+                distance = math.hypot(dx, dy)
+                if distance > 0:
+                    self.angle = math.degrees(math.atan2(-dy, dx))
+                    self.image = pygame.transform.rotate(self.original_image, self.angle)
+                    self.rect = self.image.get_rect(center=self.rect.center)
+                if distance < self.speed:
+                    self.rect.x, self.rect.y = next_pos
+                    self.current_index += 1
+                else:
+                    self.rect.x += self.speed * dx / distance
+                    self.rect.y += self.speed * dy / distance
 
-    def toggle_traffic_lights(self):
-        for row in self.traffic_lights:
-            for light in row:
-                light.toggle()
+    def set_path(self, path):
+        self.path = path
+        self.current_index = 0
 
-    def can_move_to(self, position, direction):
-        x, y = position
-        if 0 <= x < GRID_SIZE and 0 <= y < GRID_SIZE:
-            light = self.traffic_lights[y][x]
-            if light.get_state(direction) == 'green':
-                return True
-        return False
+    def draw_path(self, screen):
+        if len(self.path) > 1:
+            pygame.draw.lines(screen, PURPLE, False, self.path, 2)
 
-    def move_vehicle(self, vehicle, direction):
-        vehicle.move(direction, self)
+# 도로, 신호등 객체 생성
+scale = 90000  # 스케일을 더 축소하여 도로가 더 작게 보이도록 조정
+offset = (126.9200, 37.5200)  # 적절한 오프셋 조정
 
-def main():
-    pygame.init()
-    screen = pygame.display.set_mode(WINDOW_SIZE)
-    pygame.display.set_caption("Rush Hour with Traffic Lights")
+road_objects = [Road(transform_coords([start, end], scale, offset)[0], transform_coords([start, end], scale, offset)[1]) for start, end in roads]
+traffic_light_objects = pygame.sprite.Group([TrafficLight(*transform_coords([(x, y)], scale, offset)[0], green_time=5, yellow_time=2, red_time=5) for x, y in traffic_lights])
 
-    board = Board()
-    clock = pygame.time.Clock()
-    selected_vehicle = None
+# 노드 데이터 변환 (선형 데이터로 간주)
+nodes = []
+for _, row in nodes_gdf.iterrows():
+    geom = row.geometry
+    if isinstance(geom, MultiLineString):
+        for line in geom.geoms:
+            if isinstance(line, LineString):
+                for coord in line.coords:
+                    nodes.append(tuple(map(float, coord[:2])))  # (x, y)만 사용
+    elif isinstance(geom, LineString):
+        for coord in geom.coords:
+            nodes.append(tuple(map(float, coord[:2])))  # (x, y)만 사용
 
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                x, y = event.pos
-                grid_x = (x - MARGIN) // CELL_SIZE
-                grid_y = (y - MARGIN) // CELL_SIZE
-                for vehicle in board.vehicles:
-                    vx, vy = vehicle.position
-                    if vehicle.orientation == 'H' and vy == grid_y and vx <= grid_x < vx + 2:
-                        selected_vehicle = vehicle
-                    elif vehicle.orientation == 'V' and vx == grid_x and vy <= grid_y < vy + 2:
-                        selected_vehicle = vehicle
+nodes_transformed = transform_coords(nodes, scale, offset)
 
-        screen.fill(WHITE)
-        board.draw(screen)
-        for vehicle in board.vehicles:
-            vehicle.auto_move(board)
-        pygame.display.flip()
-        clock.tick(30)
-        board.toggle_traffic_lights()  # Change traffic lights every frame for demonstration
+# 차량 경로 설정 함수
+def calculate_path(start_node, end_node, nodes):
+    path = [start_node]
+    current_node = start_node
 
-        #abcdabcdabcdabcdabcdabcd
-        #convert image so it can be displayed in OpenCV
-        view = pygame.surfarray.array3d(screen)
+    while current_node != end_node:
+        min_distance = float('inf')
+        next_node = None
+        for node in nodes:
+            if node != current_node and node not in path:
+                distance = math.hypot(node[0] - current_node[0], node[1] - current_node[1])
+                if distance < min_distance:
+                    min_distance = distance
+                    next_node = node
+        if next_node is None:
+            break
+        path.append(next_node)
+        current_node = next_node
 
-        #  convert from (width, height, channel) to (height, width, channel)
-        view = view.transpose([1, 0, 2])
+    path.append(end_node)
+    return path
 
-        #  convert from rgb to bgr
-        img_bgr = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
+# 랜덤 차량 생성
+def create_random_vehicles(num_vehicles, nodes, roads):
+    vehicles = pygame.sprite.Group()
+    for _ in range(num_vehicles):
+        start_road = random.choice(roads)
+        end_road = random.choice(roads)
+        start_node = start_road.start_pos
+        end_node = end_road.end_pos
+        while start_node == end_node:
+            end_node = random.choice(nodes)
+        speed = random.randint(1, 3)
+        vehicle = Vehicle(start_node[0], start_node[1], speed)
+        path = calculate_path(start_node, end_node, nodes)
+        vehicle.set_path(path)
+        print(f"Vehicle path: {path}")  # 경로 출력
+        vehicles.add(vehicle)
+    return vehicles
 
-        #Display image, clear cell every 0.5 seconds
-        cv2_imshow(img_bgr)
-        time.sleep(2)
-        output.clear()
+vehicles = create_random_vehicles(5, nodes_transformed, road_objects)
 
-if __name__ == "__main__":
-    main()
+# 메인 루프
+running = True
+clock = pygame.time.Clock()
+
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    # 업데이트
+    traffic_light_objects.update()
+    vehicles.update(traffic_light_objects, vehicles, nodes_transformed)
+
+    # 화면 채우기
+    screen.fill(WHITE)
+
+    # 도로 그리기
+    for road in road_objects:
+        road.draw(screen)
+
+    # 신호등 그리기
+    traffic_light_objects.draw(screen)
+
+    # 차량 경로 그리기
+    for vehicle in vehicles:
+        vehicle.draw_path(screen)
+
+    # 차량 그리기
+    vehicles.draw(screen)
+
+    # 화면 업데이트
+    pygame.display.flip()
+
+    # 초당 60 프레임으로 설정
+    clock.tick(60)
+
+pygame.quit()
